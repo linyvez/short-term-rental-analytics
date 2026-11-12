@@ -35,7 +35,7 @@ We train on two Texas cities. Then we test the same pipeline and model on a thir
     └── Texas_inference.ipynb         4. City C: Dallas predictions with the saved model
 ```
 
-📊 **Presentation:** *add the link here*
+📊 **Presentation:** [`link`]([`Texas_exploratory.ipynb`](https://canva.link/gzol5t3l0wfxhn6)
 
 ---
 
