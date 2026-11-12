@@ -3,8 +3,8 @@
 We build a **lakehouse** over Airbnb data, a **price model**, a **dashboard** and a **Genie Agent**.
 We train on two Texas cities. Then we test the same pipeline and model on a third city that the model never saw.
 
-> **The main result:** the model works in a new city, but it is less helpful there.
-> In Dallas it beats the baseline by **13%**. In the training cities it beats the baseline by **29%**.
+> **The main result:** the first model worked in the new city, but it was less helpful there: in Dallas it beat the baseline by **13%**, in the training cities by **29%**.
+> The reason: it used location features that do not transfer to a new city. After we changed them, the Dallas error went from **$82.34** to **$77.71**, and the model beats the baseline by **18%**.
 
 ---
 
@@ -32,7 +32,8 @@ We train on two Texas cities. Then we test the same pipeline and model on a thir
     ├── Texas_exploratory.ipynb       1. Exploratory analysis of Austin and Fort Worth
     ├── Texas_pipeline.ipynb          2. ETL pipeline: bronze → silver → gold, one city per run
     ├── Texas_price_prediction.ipynb  3. Price model: training, test, baseline, predictions
-    └── Texas_inference.ipynb         4. City C: Dallas predictions with the saved model
+    ├── Texas_inference.ipynb         4. City C, first run: Dallas with the saved model
+    └── Texas_inference_v2.ipynb      5. City C, after the changes: transferable features
 ```
 
 📊 **Presentation:** [`link`](https://canva.link/gzol5t3l0wfxhn6)
@@ -106,6 +107,7 @@ We use the **medallion architecture**. Every layer is a Delta table, partitioned
 | 🥇 **Gold** | `gold_listings_features` | one listing, ready for the model | 30 columns for the model, the dashboard and Genie. |
 | 🥇 **Gold** | `gold_price_predictions` | one listing with its prediction | actual price, model price, baseline price, errors, `split` (train / test / inference). |
 | 🥇 **Gold** | `gold_model_metrics` | one MAE value | MAE of the model and the baseline per city and for both cities together. |
+| 🥇 **Gold** | `gold_price_predictions_v2`, `gold_model_metrics_v2` | the same as above | predictions and MAE of the new model (`airbnb_v2`) for all three cities. |
 
 **Why it works for a new city:**
 
@@ -143,52 +145,72 @@ The model and its helper data (medians, baseline table) are saved to the volume 
 
 ---
 
-## 4️⃣ New client, Dallas: the model still wins, but by less
+## 4️⃣ New client, Dallas: the first model saw Dallas as the east edge of Fort Worth
 
-Notebook: [`Texas_inference.ipynb`](notebooks/Texas_inference.ipynb)
+Notebooks: [`Texas_inference.ipynb`](notebooks/Texas_inference.ipynb) (first run) · [`Texas_inference_v2.ipynb`](notebooks/Texas_inference_v2.ipynb) (after the changes)
 
-We ran the **same pipeline** with `city = dallas`, then the **saved model** on all 5,913 Dallas listings. The model never saw Dallas.
+### First run
 
-### The three numbers
+We ran the **same pipeline** with `city = dallas`, then the **saved model** (`airbnb_v1`) on all 5,913 Dallas listings. The model never saw Dallas.
 
-| | MAE (USD) |
-|---|---:|
-| Baseline on Dallas | $94.40 |
-| Model on Austin + Fort Worth (test set) | $76.28 |
-| **Model on Dallas** | **$82.34** |
-
-| | Baseline | Model | Model is better by |
+| | Baseline | Model v1 | Model is better by |
 |---|---:|---:|---:|
 | Austin + Fort Worth (test set) | $107.97 | $76.28 | 🟩🟩🟩🟩🟩🟩 **29%** |
 | Dallas (new city) | $94.40 | $82.34 | 🟩🟩🟩 **13%** |
 
-### Why the gap
+### Why the first model was worse in Dallas
 
-- 🗺️ **New neighbourhoods.** The model learned prices for Austin and Fort Worth neighbourhoods. All Dallas neighbourhoods are new to it, so this feature does not help.
-- 🏙️ **New city.** `city` is a feature, and `dallas` is a value the model never saw.
-- 💎 **Luxury listings.** The biggest errors are listings above $1,000 a night: the model predicts too low. There are few such listings in the training data.
-- ✅ **But the error is still close.** $82 in Dallas against $80 in Austin: what the model learned about size, rooms and reviews also works in a new Texas city.
+The model learned **where** a listing is from features that only make sense in Austin and Fort Worth:
 
-### What we changed for Dallas
+- 🗺️ **`latitude`, `longitude`.** Trees can only compare numbers, they cannot continue a trend. Dallas is east of every Fort Worth listing, so for the model **every Dallas listing looked like the east edge of Fort Worth**. Downtown and the suburbs got the same location effect.
+- 🏘️ **`neighbourhood_cleansed`.** All Dallas neighbourhoods are new, so this feature gives no information.
+- 🏙️ **`city`.** `dallas` is a value the model never saw.
 
-> *Fill in: for every change, write what broke, what you changed, and why.*
+Size, rooms and reviews still worked, so the first model beat the baseline, but by less.
 
-| # | Change | Kind | Why |
+### What we changed
+
+| # | Problem | Kind | Change |
 |---|---|---|---|
-| 1 | | pipeline fix / model change | |
-| 2 | | pipeline fix / model change | |
+| 1 | Dallas has another snapshot date (2026-09-19, not 2026-09-17) | pipeline fix | the snapshot date is a parameter of every pipeline run |
+| 2 | `latitude` / `longitude` do not transfer to a new city | model change | removed; new feature `dist_center_km`: the distance to the city's downtown |
+| 3 | `neighbourhood_cleansed` and `city` have only new values in Dallas | model change | removed |
+| 4 | the biggest errors are expensive listings | model change | new features `n_amenities`, `has_pool`, `has_hot_tub` |
+
+`dist_center_km` means the same in every city: "2 km from downtown" in Dallas is like "2 km from downtown" in Austin. The downtown coordinates of each city are in one setting (`CITY_CENTERS`), so a new city needs one new line.
+
+**A fair choice.** We chose the new features **without Dallas**: we trained on one training city and tested on the other one, with the train data only. Dallas was used once, at the end.
+
+| Check: train on one city, test on the other (train data only) | Average MAE |
+|---|---:|
+| v1: old features | $93.77 |
+| **v2: transferable features** | **$88.79** |
+
+### Results after the changes
+
+| Dallas (new city) | MAE (USD) | Better than the baseline by |
+|---|---:|---:|
+| Baseline | $94.40 | |
+| First run: model v1 | $82.34 | 🟩🟩🟩 13% |
+| **After the changes: model v2** | **$77.71** | 🟩🟩🟩🟩 **18%** |
+
+The new model is **5.6% better** than the first one in Dallas.
+
+### What is still hard
+
+- 💎 **Luxury listings.** The biggest errors are listings above $1,000 a night: the model predicts too low. There are few such listings in the training data.
 
 ---
 
 ## 5️⃣ Dashboard and Genie
 
-- **AI/BI Dashboard "Texas Listings":** built on the gold tables. The **Model performance** page shows the predictions from `gold_price_predictions`, also for Dallas (`split = 'inference'`). *Add the other pages here.*
+- **AI/BI Dashboard "Texas Listings":** built on the gold tables. The **Model performance** page shows the predictions from `gold_price_predictions`, also for Dallas (`split = 'inference'`).
 - **Genie Agent:** answers questions about the gold tables, for example:
   - *"What is the median price of entire homes in Austin?"*
   - *"Which neighbourhoods in Fort Worth have the most listings?"*
   - *"Where does the model under-price listings the most?"*
 
-> *Add links or screenshots here.*
+The demo of the dashboard and Genie is in the [presentation](https://canva.link/gzol5t3l0wfxhn6).
 
 ---
 
@@ -200,7 +222,8 @@ All work runs on **Databricks Free Edition** and costs nothing.
 2. Run `Texas_exploratory` to see the analysis.
 3. Run `Texas_pipeline` three times: `austin` / `2026-09-17`, `fort_worth` / `2026-09-17`, `dallas` / `2026-09-19`.
 4. Run `Texas_price_prediction`. It trains on Austin and Fort Worth only and saves the model.
-5. Run `Texas_inference` to score Dallas.
+5. Run `Texas_inference` to score Dallas with the first model.
+6. Run `Texas_inference_v2` to choose the new features, train the new model and score Dallas again.
 
 ---
 
