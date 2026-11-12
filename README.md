@@ -210,4 +210,5 @@ All work runs on **Databricks Free Edition** and costs nothing.
 |---|---|
 | *Oleksandra Shergina* | ETL Pipeline, Price Model, Genie Agent |
 | *Viktoriia Lushpak* | EDA, Dashboard, New client |
-| *name* | *work* |
+| *Maksym Hobela* | EDA & Dashboard, Model v2 for Dallas |
+| *Volodymyr Yarishevskyi* | README |
